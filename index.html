@@ -196,11 +196,47 @@
     const overlayMessage = document.getElementById('overlayMessage');
     const overlayBtn = document.getElementById('overlayBtn');
 
+    // --- 全新加入：尋找系統男聲語音的邏輯 ---
+    let preferredMaleVoice = null;
+    function loadMaleVoice() {
+        const voices = window.speechSynthesis.getVoices();
+        if (voices.length === 0) return;
+
+        // 常見的男聲名稱清單 (涵蓋 Windows, macOS, iOS, Android, Chrome)
+        const maleVoiceKeywords = ['David', 'Daniel', 'Alex', 'Fred', 'Arthur', 'Male', 'James'];
+        
+        for (let voice of voices) {
+            if (voice.lang.includes('en')) {
+                // 檢查是否符合男聲關鍵字
+                if (maleVoiceKeywords.some(keyword => voice.name.includes(keyword))) {
+                    preferredMaleVoice = voice;
+                    break;
+                }
+            }
+        }
+        
+        // 如果找不到明確標示的男聲，退而求其次找任何英文語音，避免沒聲音
+        if (!preferredMaleVoice) {
+            preferredMaleVoice = voices.find(v => v.lang.includes('en'));
+        }
+    }
+
+    // 瀏覽器載入語音包需要時間，綁定 onvoiceschanged 事件
+    if (window.speechSynthesis && window.speechSynthesis.onvoiceschanged !== undefined) {
+        window.speechSynthesis.onvoiceschanged = loadMaleVoice;
+    }
+    // 嘗試立即載入（如果語音包已經準備好）
+    if (window.speechSynthesis) {
+        loadMaleVoice();
+    }
+    // ----------------------------------------
+
     function speakSentence(text) {
         if (!window.speechSynthesis) return;
         window.speechSynthesis.cancel();
         const utterance = new SpeechSynthesisUtterance(text);
         utterance.lang = 'en-US';
+        if (preferredMaleVoice) utterance.voice = preferredMaleVoice; // 💥 套用男聲
         utterance.rate = 0.6; // 吃單字的發音也稍微放慢一點 (原為 0.7)
         window.speechSynthesis.speak(utterance);
     }
@@ -220,42 +256,38 @@
         }
     });
 
-    // 嘗試播放音樂 (需在使用者點擊後觸發才能突破瀏覽器限制)
-    function playBGM() {
-        if (!isMusicPlaying) {
-            bgm.volume = 0.5; // 確保音量設定正確
+    // 【全新加入】全域音訊與語音解鎖器 (針對 iOS/iPadOS)
+    let isAudioUnlocked = false;
+    function unlockAllAudio() {
+        if (isAudioUnlocked) return;
+
+        // 1. 解鎖背景音樂
+        if (bgm.paused) {
+            bgm.volume = 0.5;
             let playPromise = bgm.play();
             if (playPromise !== undefined) {
                 playPromise.then(() => {
                     isMusicPlaying = true;
                     bgmToggle.textContent = "🔊";
-                }).catch(e => {
-                    console.log("等待使用者互動後播放音樂", e);
-                    bgmToggle.textContent = "🔇";
-                });
+                }).catch(e => console.log("音樂解鎖等待中...", e));
             }
         }
+
+        // 2. 解鎖蘋果語音引擎 (非常關鍵：必須播放一段無聲語音，後續貪吃蛇吃字才能發出聲音)
+        if (window.speechSynthesis) {
+            const silentUtterance = new SpeechSynthesisUtterance('');
+            if (preferredMaleVoice) silentUtterance.voice = preferredMaleVoice; // 💥 套用男聲
+            silentUtterance.volume = 0; // 無聲
+            window.speechSynthesis.speak(silentUtterance);
+        }
+
+        isAudioUnlocked = true;
     }
 
-    // 【全新加入】全域點擊解鎖音樂機制 (針對 iOS/Safari 嚴格限制)
-    document.body.addEventListener('click', function unlockAudio() {
-        if (!isMusicPlaying && bgm.paused) {
-            playBGM();
-        }
-        // 音樂一旦成功解鎖，就移除這個監聽器
-        if (isMusicPlaying) {
-            document.body.removeEventListener('click', unlockAudio);
-        }
-    });
-    
-    document.body.addEventListener('touchstart', function unlockAudioTouch() {
-        if (!isMusicPlaying && bgm.paused) {
-            playBGM();
-        }
-        if (isMusicPlaying) {
-            document.body.removeEventListener('touchstart', unlockAudioTouch);
-        }
-    }, {passive: true});
+    // 監聽所有點擊與觸控來觸發解鎖
+    document.body.addEventListener('click', unlockAllAudio);
+    document.body.addEventListener('touchstart', unlockAllAudio, {passive: true});
+
 
     function showIntroPage1() {
         // 確保每次回到首頁（包含重新開始遊戲）時，徹底歸零所有分數與時間狀態
@@ -283,7 +315,7 @@
         `;
         overlayBtn.innerHTML = "下一步 Next";
         overlayBtn.onclick = () => {
-            playBGM(); // 確保點擊按鈕時觸發
+            unlockAllAudio(); // 確保點擊按鈕時徹底解鎖音訊
             showIntroPage2();
         };
         overlay.classList.remove('hidden');
@@ -543,6 +575,7 @@
             const utterance = new SpeechSynthesisUtterance(fullText);
             window._currentUtterance = utterance; // 防止 Safari 垃圾回收導致語音中斷
             utterance.lang = 'en-US';
+            if (preferredMaleVoice) utterance.voice = preferredMaleVoice; // 💥 套用男聲
             utterance.rate = 0.5; // 朗讀完整句子的速度調慢 (原為 0.65)
             
             // Web Speech API 事件：當讀到句子裡的某個單字時觸發
