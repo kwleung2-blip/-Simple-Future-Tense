@@ -2,14 +2,18 @@
 <html lang="zh-HK">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>貪吃蛇學文法：Simple Future Tense (SVOPT)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@600;800&family=Noto+Sans+TC:wght@500;700&display=swap" rel="stylesheet">
     <style>
         body {
             font-family: 'Noto Sans TC', 'Nunito', sans-serif;
-            touch-action: none;
+            touch-action: none; /* 禁用瀏覽器預設的觸控手勢 (縮放、平移) */
+            overscroll-behavior: none; /* 防止邊緣回彈/下拉刷新效應 */
+            -webkit-user-select: none; /* 禁用文字反白 (防止長按選取) */
+            user-select: none;
+            -webkit-touch-callout: none; /* 禁用長按彈出選單 */
         }
         canvas {
             background-color: #a7f3d0;
@@ -39,10 +43,9 @@
 </head>
 <body class="bg-blue-50 h-screen w-screen flex flex-col items-center overflow-hidden relative">
 
-    <!-- 加入背景音樂 (預載入，提供 MP3 確保 iOS/Safari 相容性) -->
-    <audio id="bgm" loop preload="auto">
-        <source src="https://freepd.com/music/Happy%20Monkey.mp3" type="audio/mpeg">
-        <source src="https://upload.wikimedia.org/wikipedia/commons/4/4b/Kevin_MacLeod_-_Carefree.ogg" type="audio/ogg">
+    <!-- 更換為極度穩定的 Mixkit 輕快音樂來源，並加入 crossorigin 避免跨網域問題 -->
+    <audio id="bgm" loop preload="auto" crossorigin="anonymous">
+        <source src="https://assets.mixkit.co/music/preview/mixkit-happy-walk-2271.mp3" type="audio/mpeg">
     </audio>
 
     <header class="w-full max-w-lg px-4 pt-4 pb-2 flex justify-between items-center text-slate-700">
@@ -93,6 +96,22 @@
     </div>
 
 <script>
+    // --- 修正 iPad/iOS 畫面位移與放大問題 ---
+    // 1. 防止畫面上下滑動與橡皮筋效應 (Bouncing)
+    document.addEventListener('touchmove', function(e) {
+        e.preventDefault();
+    }, { passive: false });
+
+    // 2. 防止雙擊螢幕時畫面忽然放大
+    let lastTouchEnd = 0;
+    document.addEventListener('touchend', function (event) {
+        let now = (new Date()).getTime();
+        if (now - lastTouchEnd <= 300) {
+            event.preventDefault();
+        }
+        lastTouchEnd = now;
+    }, { passive: false });
+
     // --- 題庫區 ---
     const poolSVO = [
         { words: ["I", "will", "do", "my", "homework", "."], struct: ["I", "will do", "my homework", "-", "-"] },
@@ -166,7 +185,7 @@
     const bgm = document.getElementById('bgm');
     const bgmToggle = document.getElementById('bgmToggle');
     let isMusicPlaying = false;
-    bgm.volume = 0.3; // 提高音量至 30% 確保清楚聽見
+    bgm.volume = 0.5; // 提高音量至 50% 確保清楚聽見
 
     const scoreDisplay = document.getElementById('scoreDisplay');
     const timeDisplay = document.getElementById('timeDisplay');
@@ -182,12 +201,13 @@
         window.speechSynthesis.cancel();
         const utterance = new SpeechSynthesisUtterance(text);
         utterance.lang = 'en-US';
-        utterance.rate = 0.7; 
+        utterance.rate = 0.6; // 吃單字的發音也稍微放慢一點 (原為 0.7)
         window.speechSynthesis.speak(utterance);
     }
 
     // 音樂控制開關
-    bgmToggle.addEventListener('click', () => {
+    bgmToggle.addEventListener('click', (e) => {
+        e.stopPropagation(); // 避免觸發全域點擊
         if (bgm.paused) {
             bgm.play().then(() => {
                 bgmToggle.textContent = "🔊";
@@ -202,8 +222,8 @@
 
     // 嘗試播放音樂 (需在使用者點擊後觸發才能突破瀏覽器限制)
     function playBGM() {
-        if (bgm.paused) {
-            bgm.volume = 0.3; // 確保音量設定正確
+        if (!isMusicPlaying) {
+            bgm.volume = 0.5; // 確保音量設定正確
             let playPromise = bgm.play();
             if (playPromise !== undefined) {
                 playPromise.then(() => {
@@ -216,6 +236,26 @@
             }
         }
     }
+
+    // 【全新加入】全域點擊解鎖音樂機制 (針對 iOS/Safari 嚴格限制)
+    document.body.addEventListener('click', function unlockAudio() {
+        if (!isMusicPlaying && bgm.paused) {
+            playBGM();
+        }
+        // 音樂一旦成功解鎖，就移除這個監聽器
+        if (isMusicPlaying) {
+            document.body.removeEventListener('click', unlockAudio);
+        }
+    });
+    
+    document.body.addEventListener('touchstart', function unlockAudioTouch() {
+        if (!isMusicPlaying && bgm.paused) {
+            playBGM();
+        }
+        if (isMusicPlaying) {
+            document.body.removeEventListener('touchstart', unlockAudioTouch);
+        }
+    }, {passive: true});
 
     function showIntroPage1() {
         // 確保每次回到首頁（包含重新開始遊戲）時，徹底歸零所有分數與時間狀態
@@ -243,7 +283,7 @@
         `;
         overlayBtn.innerHTML = "下一步 Next";
         overlayBtn.onclick = () => {
-            playBGM(); // 在第一次點擊按鈕時觸發背景音樂
+            playBGM(); // 確保點擊按鈕時觸發
             showIntroPage2();
         };
         overlay.classList.remove('hidden');
@@ -305,6 +345,7 @@
     }
 
     function startReadyCountdown() {
+        if (window.speechSynthesis) window.speechSynthesis.cancel(); // 進入下一關前，先停止殘餘的語音朗讀
         overlay.classList.add('hidden');
         initLevel();
         draw();
@@ -412,7 +453,24 @@
         clearInterval(gameLoop);
         
         const struct = sentenceStructures[currentLevel];
-        const fullText = sentences[currentLevel].join(" ").replace(/\s\./g, ".");
+        const words = sentences[currentLevel];
+        
+        // 建立朗讀字串與字元索引，用來精準對應發音與文字變色
+        let fullText = "";
+        let offsets = [];
+        let sentenceHtml = "";
+        
+        words.forEach((w, i) => {
+            let isPunctuation = (w === "." || w === "?" || w === "!");
+            let prefix = (i === 0 || isPunctuation) ? "" : " "; // 標點符號前不加空白
+            let start = fullText.length + prefix.length;
+            fullText += prefix + w;
+            let end = fullText.length;
+            offsets.push({ index: i, start: start, end: end, word: w });
+            
+            // 將每個單字包裝在獨立的 span 標籤中，方便後續用 JS 控制顏色
+            sentenceHtml += `${prefix}<span id="res-word-${i}" class="inline-block transition-all duration-150 text-white">${w}</span>`;
+        });
         
         const renderSlot = (label, ch, colorClass, val) => {
             const isEmpty = val === "-";
@@ -444,26 +502,119 @@
         `;
         
         overlayTitle.textContent = "太棒了！挑戰成功";
-        overlayTitle.className = "text-3xl font-bold text-green-400 mb-4";
+        overlayTitle.className = "text-3xl font-bold text-green-400 mb-2";
+        
+        // 將句子字體放大至 4xl/5xl，並套用剛剛生成的動態變色 HTML
         overlayMessage.innerHTML = `
-            <div class="text-white mb-2 italic">"${fullText}"</div>
+            <div class="text-4xl sm:text-5xl font-black text-white mb-6 mt-4 tracking-wide text-center leading-normal drop-shadow-md">
+                ${sentenceHtml}
+            </div>
             ${svoptHtml}
-            <button onclick="window.speakSentence('${fullText.replace(/'/g, "\\'")}')" class="bg-blue-600/50 hover:bg-blue-600 p-2 rounded-full transition-colors mb-4 flex items-center gap-2 px-6 text-sm text-white mx-auto">
-                <span>🔊 慢速朗讀句子</span>
+            <button id="replaySentenceBtn" onclick="window.playFinalSentenceWithHighlight(false)" class="hidden bg-blue-600/50 hover:bg-blue-600 p-3 rounded-full transition-colors mb-4 flex items-center gap-2 px-8 text-lg font-bold text-white mx-auto shadow-lg hover:scale-105 active:scale-95 transform">
+                <span>🔊 再次朗讀句子</span>
             </button>
         `;
         
-        currentLevel++;
-        if (currentLevel >= sentences.length) {
-            overlayBtn.innerHTML = "查看最後總分";
-            overlayBtn.onclick = showScoreboard;
-        } else {
-            overlayBtn.innerHTML = "下一關 Next Level";
-            overlayBtn.onclick = startReadyCountdown;
-        }
+        let playCount = 0;
+        const maxPlays = 2;
+
+        // 鎖定「下一關」按鈕，直到播放完成
+        overlayBtn.disabled = true;
+        overlayBtn.className = "bg-slate-500 text-white font-bold py-4 px-10 rounded-full shadow-lg text-xl cursor-not-allowed opacity-80 transition-all duration-300";
+        overlayBtn.innerHTML = "請聆聽發音... (1/2)";
+        overlayBtn.onclick = null;
         
+        currentLevel++;
+        
+        // 綁定包含文字變色特效的朗讀函數
+        window.playFinalSentenceWithHighlight = (isAutoPlay = false) => {
+            if (!window.speechSynthesis) {
+                unlockNextButton();
+                return;
+            }
+            window.speechSynthesis.cancel();
+            
+            // 每次重新播放前，先將所有字恢復為預設白色
+            words.forEach((_, i) => {
+                const el = document.getElementById(`res-word-${i}`);
+                if(el) el.className = "inline-block transition-all duration-150 text-white";
+            });
+
+            const utterance = new SpeechSynthesisUtterance(fullText);
+            window._currentUtterance = utterance; // 防止 Safari 垃圾回收導致語音中斷
+            utterance.lang = 'en-US';
+            utterance.rate = 0.5; // 朗讀完整句子的速度調慢 (原為 0.65)
+            
+            // Web Speech API 事件：當讀到句子裡的某個單字時觸發
+            utterance.onboundary = (event) => {
+                if (event.name === 'word') {
+                    const charIndex = event.charIndex;
+                    const activeWord = offsets.find(o => charIndex >= o.start && charIndex <= o.end);
+                    
+                    if (activeWord) {
+                        // 未讀到的或已讀過的字，稍微變暗一點 (slate-300) 凸顯焦點
+                        words.forEach((_, i) => {
+                            const el = document.getElementById(`res-word-${i}`);
+                            if(el) el.className = "inline-block transition-all duration-150 text-slate-300";
+                        });
+                        
+                        // 正在讀的字：變成亮黃色、放大 110%、稍微往上浮
+                        const el = document.getElementById(`res-word-${activeWord.index}`);
+                        if (el) {
+                            el.className = "inline-block transition-all duration-150 text-yellow-300 scale-110 drop-shadow-[0_0_8px_rgba(253,224,71,0.8)] -translate-y-1";
+                        }
+                    }
+                }
+            };
+
+            // 朗讀結束後恢復全白，並判斷是否需要重播或解鎖
+            utterance.onend = () => {
+                words.forEach((_, i) => {
+                    const el = document.getElementById(`res-word-${i}`);
+                    if(el) el.className = "inline-block transition-all duration-150 text-white";
+                });
+
+                if (isAutoPlay) {
+                    playCount++;
+                    if (playCount < maxPlays) {
+                        overlayBtn.innerHTML = `請聆聽發音... (${playCount + 1}/${maxPlays})`;
+                        // 等待 1 秒後播放第二次
+                        setTimeout(() => window.playFinalSentenceWithHighlight(true), 1000);
+                    } else {
+                        unlockNextButton();
+                    }
+                }
+            };
+            
+            // 萬一語音 API 發生錯誤，確保按鈕能解鎖以免遊戲卡死
+            utterance.onerror = () => {
+                unlockNextButton();
+            };
+
+            window.speechSynthesis.speak(utterance);
+        };
+
+        function unlockNextButton() {
+            overlayBtn.disabled = false;
+            // 恢復成原本的藍色可點擊按鈕樣式
+            overlayBtn.className = "bg-blue-500 hover:bg-blue-600 text-white font-bold py-4 px-10 rounded-full shadow-lg text-xl transition-transform active:scale-95";
+            
+            if (currentLevel >= sentences.length) {
+                overlayBtn.innerHTML = "查看最後總分";
+                overlayBtn.onclick = showScoreboard;
+            } else {
+                overlayBtn.innerHTML = "下一關 Next Level";
+                overlayBtn.onclick = startReadyCountdown;
+            }
+            
+            // 顯示讓學生可以手動重播的按鈕
+            const replayBtn = document.getElementById('replaySentenceBtn');
+            if (replayBtn) replayBtn.classList.remove('hidden');
+        }
+
         overlay.classList.remove('hidden');
-        setTimeout(() => speakSentence(fullText), 500);
+        // 延遲半秒後自動觸發第一次播放 (傳入 true 代表是自動播放模式)
+        setTimeout(() => window.playFinalSentenceWithHighlight(true), 500);
     }
 
     function showScoreboard() {
@@ -511,6 +662,7 @@
             const wordObj = wordsOnBoard[i];
             if (head.y === wordObj.y && head.x >= wordObj.x && head.x < wordObj.x + wordObj.span) {
                 if (wordObj.word === sentences[currentLevel][targetWordIndex]) {
+                    speakSentence(wordObj.word); // 讀出吃下的正確單字發音
                     score += 10; 
                     scoreDisplay.textContent = score; 
                     targetWordIndex++; 
@@ -595,15 +747,32 @@
         const container = canvas.parentElement; 
         let msgDiv = document.getElementById('dizzyMsg') || document.createElement('div');
         msgDiv.id = 'dizzyMsg'; container.appendChild(msgDiv);
-        msgDiv.className = 'absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-rose-600/95 text-white font-bold py-6 px-10 rounded-2xl shadow-2xl z-50 text-center pointer-events-none w-4/5';
-        msgDiv.innerHTML = `<span class="text-4xl block mb-4">😵 吃錯詞了！</span>請找 <span class="text-yellow-300 text-2xl underline">"${targetWord}"</span>`;
+        msgDiv.className = 'absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-rose-600/95 text-white font-bold py-6 px-8 rounded-2xl shadow-2xl z-50 text-center pointer-events-none w-4/5';
+        
+        // 加入跳動的提示文字，提醒學生準備轉向
+        msgDiv.innerHTML = `
+            <span class="text-3xl sm:text-4xl block mb-4">😵 吃錯詞了！</span>
+            <span class="text-lg sm:text-xl">請找 <span class="text-yellow-300 text-2xl underline">"${targetWord}"</span></span>
+            <div class="mt-6 text-xl text-white bg-rose-800/50 py-2 rounded-lg border border-rose-400 animate-bounce">
+                ⚠️ 準備轉彎！
+            </div>
+        `;
         draw();
+        
         if (dizzyTimeout) clearTimeout(dizzyTimeout);
         dizzyTimeout = setTimeout(() => {
-            msgDiv.className = 'absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-blue-500/90 text-white font-bold w-24 h-24 flex justify-center items-center rounded-full z-50 text-6xl shadow-xl';
+            // 倒數計時也加入提示文字
+            msgDiv.className = 'absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-blue-600/95 text-white font-bold px-8 py-6 flex flex-col justify-center items-center rounded-2xl z-50 shadow-2xl pointer-events-none';
             let c = 3;
             const r = () => {
-                if (c > 0) { msgDiv.innerHTML = c; c--; dizzyTimeout = setTimeout(r, 1000); }
+                if (c > 0) { 
+                    msgDiv.innerHTML = `
+                        <span class="text-7xl mb-2 drop-shadow-md">${c}</span>
+                        <span class="text-xl text-yellow-300 animate-pulse">👇 快按方向鍵轉彎！</span>
+                    `; 
+                    c--; 
+                    dizzyTimeout = setTimeout(r, 1000); 
+                }
                 else { canvas.classList.remove('shake-animation'); isDizzy = false; msgDiv.remove(); }
             };
             r();
