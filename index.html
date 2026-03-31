@@ -192,56 +192,132 @@
     const overlayMessage = document.getElementById('overlayMessage');
     const overlayBtn = document.getElementById('overlayBtn');
 
-    // --- 全新加入：尋找系統男聲語音的邏輯 ---
-    let preferredMaleVoice = null;
-    function loadMaleVoice() {
+    // --- 全新加入：即時合成按鈕點擊音效 (無延遲、無須下載) ---
+    let audioCtx = null;
+    function initAudioCtx() {
+        if (!audioCtx) {
+            const AudioContext = window.AudioContext || window.webkitAudioContext;
+            audioCtx = new AudioContext();
+        }
+        if (audioCtx.state === 'suspended') {
+            audioCtx.resume();
+        }
+    }
+
+    function playClickSound() {
+        try {
+            initAudioCtx();
+            const osc = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            // 設定聲音類型與頻率變化 (製造出短促清脆的 "Pop" 聲)
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(600, audioCtx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(100, audioCtx.currentTime + 0.1);
+            
+            // 設定音量變化 (瞬間大聲然後極速衰減)
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+            
+            osc.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            osc.start();
+            osc.stop(audioCtx.currentTime + 0.1);
+        } catch(e) { 
+            console.log("播放按鈕音效失敗", e); 
+        }
+    }
+
+    // 將點擊音效綁定到所有的過場按鈕上（包含下一步、開始遊戲、下一關等）
+    overlayBtn.addEventListener('click', playClickSound);
+    // ----------------------------------------------------
+
+    // --- 全新加入：單字發音 (Speech Synthesis) ---
+    let preferredVoice = null;
+    function loadVoice() {
+        if (!window.speechSynthesis) return;
         const voices = window.speechSynthesis.getVoices();
         if (voices.length === 0) return;
 
-        // 常見的男聲名稱清單 (涵蓋 Windows, macOS, iOS, Android, Chrome)
         const maleVoiceKeywords = ['David', 'Daniel', 'Alex', 'Fred', 'Arthur', 'Male', 'James'];
-        
         for (let voice of voices) {
-            if (voice.lang.includes('en')) {
-                // 檢查是否符合男聲關鍵字
-                if (maleVoiceKeywords.some(keyword => voice.name.includes(keyword))) {
-                    preferredMaleVoice = voice;
-                    break;
-                }
+            if (voice.lang.includes('en') && maleVoiceKeywords.some(keyword => voice.name.includes(keyword))) {
+                preferredVoice = voice;
+                break;
             }
         }
-        
-        // 如果找不到明確標示的男聲，退而求其次找任何英文語音，避免沒聲音
-        if (!preferredMaleVoice) {
-            preferredMaleVoice = voices.find(v => v.lang.includes('en'));
+        if (!preferredVoice) {
+            preferredVoice = voices.find(v => v.lang.includes('en'));
         }
     }
-
-    // 瀏覽器載入語音包需要時間，綁定 onvoiceschanged 事件
-    if (window.speechSynthesis && window.speechSynthesis.onvoiceschanged !== undefined) {
-        window.speechSynthesis.onvoiceschanged = loadMaleVoice;
-    }
-    // 嘗試立即載入（如果語音包已經準備好）
+    
     if (window.speechSynthesis) {
-        loadMaleVoice();
+        if (window.speechSynthesis.onvoiceschanged !== undefined) {
+            window.speechSynthesis.onvoiceschanged = loadVoice;
+        }
+        loadVoice();
     }
-    // ----------------------------------------
 
-    function speakSentence(text) {
+    function speakWord(text) {
         if (!window.speechSynthesis) return;
-        window.speechSynthesis.resume(); // 💥 強制喚醒休眠的 iOS 語音引擎
-        window.speechSynthesis.cancel();
-        const utterance = new SpeechSynthesisUtterance(text);
+        
+        // 過濾掉標點符號，讓單字獨立發音時更自然
+        const cleanText = text.replace(/[\.\?\!]/g, '');
+        if (!cleanText.trim()) return;
+
+        window.speechSynthesis.resume(); // 強制喚醒 iOS 語音引擎
+        window.speechSynthesis.cancel(); // 中斷前一個正在唸的字
+        
+        const utterance = new SpeechSynthesisUtterance(cleanText);
         utterance.lang = 'en-US';
-        if (preferredMaleVoice) utterance.voice = preferredMaleVoice; // 💥 套用男聲
-        utterance.rate = 0.6; // 吃單字的發音也稍微放慢一點 (原為 0.7)
+        if (preferredVoice) utterance.voice = preferredVoice;
+        utterance.rate = 0.8; // 速度微調，聽起來清晰
         window.speechSynthesis.speak(utterance);
     }
 
-    // 【全新加入】全域音訊與語音解鎖器 (針對 iOS/iPadOS 最強勢解鎖)
+    // --- 修改：整句發音 (支援回呼函數，並加入防當機保險機制) ---
+    function speakSentence(text, onEndCallback) {
+        if (!window.speechSynthesis) {
+            if (onEndCallback) setTimeout(onEndCallback, 2000);
+            return;
+        }
+        
+        window.speechSynthesis.resume(); 
+        window.speechSynthesis.cancel(); 
+        
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = 'en-US';
+        if (preferredVoice) utterance.voice = preferredVoice;
+        utterance.rate = 0.75; // 唸整句時稍微放慢一點點，讓學生聽得更清楚
+        
+        if (onEndCallback) {
+            let called = false;
+            const safeCallback = () => {
+                if (!called) {
+                    called = true;
+                    onEndCallback();
+                }
+            };
+            utterance.onend = safeCallback;
+            utterance.onerror = safeCallback;
+            
+            // 蘋果 iOS 系統的語音 API 有時不會觸發 onend 事件
+            // 這裡加入一個保險機制，根據字串長度估算最長播放時間，時間到強制觸發下一步，避免卡關
+            const fallbackTime = Math.max(2000, text.length * 150) + 1000;
+            setTimeout(safeCallback, fallbackTime);
+        }
+
+        window.speechSynthesis.speak(utterance);
+    }
+    // ----------------------------------------------------
+
+    // 【全域音樂與語音解鎖器】確保蘋果設備能正常發出聲音
     let isAudioUnlocked = false;
     function unlockAllAudio() {
         if (isAudioUnlocked) return;
+
+        initAudioCtx(); // 確保蘋果設備在第一次點擊時，成功喚醒按鈕音效引擎
 
         // 1. 強制解鎖背景音樂
         if (bgm.paused) {
@@ -252,15 +328,12 @@
             }
         }
 
-        // 2. 更強力的解鎖蘋果語音引擎
+        // 2. 解鎖語音引擎
         if (window.speechSynthesis) {
-            window.speechSynthesis.resume(); // 💥 喚醒引擎
-            
-            // 使用空白字元而不是 hello，避免發出怪聲，但能成功騙過 iOS
-            const silentUtterance = new SpeechSynthesisUtterance(' '); 
-            if (preferredMaleVoice) silentUtterance.voice = preferredMaleVoice; 
-            silentUtterance.volume = 0.01; 
-            silentUtterance.rate = 10; 
+            window.speechSynthesis.resume();
+            const silentUtterance = new SpeechSynthesisUtterance(' ');
+            if (preferredVoice) silentUtterance.voice = preferredVoice;
+            silentUtterance.volume = 0.01;
             window.speechSynthesis.speak(silentUtterance);
         }
 
@@ -363,7 +436,6 @@
     }
 
     function startReadyCountdown() {
-        if (window.speechSynthesis) window.speechSynthesis.cancel(); // 進入下一關前，先停止殘餘的語音朗讀
         overlay.classList.add('hidden');
         initLevel();
         draw();
@@ -473,21 +545,12 @@
         const struct = sentenceStructures[currentLevel];
         const words = sentences[currentLevel];
         
-        // 建立朗讀字串與字元索引，用來精準對應發音與文字變色
+        // 建立完整句子字串
         let fullText = "";
-        let offsets = [];
-        let sentenceHtml = "";
-        
         words.forEach((w, i) => {
             let isPunctuation = (w === "." || w === "?" || w === "!");
-            let prefix = (i === 0 || isPunctuation) ? "" : " "; // 標點符號前不加空白
-            let start = fullText.length + prefix.length;
+            let prefix = (i === 0 || isPunctuation) ? "" : " ";
             fullText += prefix + w;
-            let end = fullText.length;
-            offsets.push({ index: i, start: start, end: end, word: w });
-            
-            // 將每個單字包裝在獨立的 span 標籤中，方便後續用 JS 控制顏色
-            sentenceHtml += `${prefix}<span id="res-word-${i}" class="inline-block transition-all duration-150 text-white">${w}</span>`;
         });
         
         const renderSlot = (label, ch, colorClass, val) => {
@@ -522,119 +585,43 @@
         overlayTitle.textContent = "太棒了！挑戰成功";
         overlayTitle.className = "text-3xl font-bold text-green-400 mb-2";
         
-        // 將句子字體放大至 4xl/5xl，並套用剛剛生成的動態變色 HTML
+        // 顯示純文字完整句子，移除語音相關按鈕與標籤
         overlayMessage.innerHTML = `
             <div class="text-4xl sm:text-5xl font-black text-white mb-6 mt-4 tracking-wide text-center leading-normal drop-shadow-md">
-                ${sentenceHtml}
+                ${fullText}
             </div>
             ${svoptHtml}
-            <button id="replaySentenceBtn" onclick="window.playFinalSentenceWithHighlight(false)" class="hidden bg-blue-600/50 hover:bg-blue-600 p-3 rounded-full transition-colors mb-4 flex items-center gap-2 px-8 text-lg font-bold text-white mx-auto shadow-lg hover:scale-105 active:scale-95 transform">
-                <span>🔊 再次朗讀句子</span>
-            </button>
         `;
-        
-        let playCount = 0;
-        const maxPlays = 2;
-
-        // 鎖定「下一關」按鈕，直到播放完成
-        overlayBtn.disabled = true;
-        overlayBtn.className = "bg-slate-500 text-white font-bold py-4 px-10 rounded-full shadow-lg text-xl cursor-not-allowed opacity-80 transition-all duration-300";
-        overlayBtn.innerHTML = "請聆聽發音... (1/2)";
-        overlayBtn.onclick = null;
         
         currentLevel++;
         
-        // 綁定包含文字變色特效的朗讀函數
-        window.playFinalSentenceWithHighlight = (isAutoPlay = false) => {
-            if (!window.speechSynthesis) {
-                unlockNextButton();
-                return;
-            }
-            window.speechSynthesis.resume(); // 💥 強制喚醒 iOS 引擎
-            window.speechSynthesis.cancel();
-            
-            // 每次重新播放前，先將所有字恢復為預設白色
-            words.forEach((_, i) => {
-                const el = document.getElementById(`res-word-${i}`);
-                if(el) el.className = "inline-block transition-all duration-150 text-white";
-            });
-
-            const utterance = new SpeechSynthesisUtterance(fullText);
-            window._currentUtterance = utterance; // 防止 Safari 垃圾回收導致語音中斷
-            utterance.lang = 'en-US';
-            if (preferredMaleVoice) utterance.voice = preferredMaleVoice; // 💥 套用男聲
-            utterance.rate = 0.5; // 朗讀完整句子的速度調慢 (原為 0.65)
-            
-            // Web Speech API 事件：當讀到句子裡的某個單字時觸發
-            utterance.onboundary = (event) => {
-                if (event.name === 'word') {
-                    const charIndex = event.charIndex;
-                    const activeWord = offsets.find(o => charIndex >= o.start && charIndex <= o.end);
-                    
-                    if (activeWord) {
-                        // 未讀到的或已讀過的字，稍微變暗一點 (slate-300) 凸顯焦點
-                        words.forEach((_, i) => {
-                            const el = document.getElementById(`res-word-${i}`);
-                            if(el) el.className = "inline-block transition-all duration-150 text-slate-300";
-                        });
-                        
-                        // 正在讀的字：變成亮黃色、放大 110%、稍微往上浮
-                        const el = document.getElementById(`res-word-${activeWord.index}`);
-                        if (el) {
-                            el.className = "inline-block transition-all duration-150 text-yellow-300 scale-110 drop-shadow-[0_0_8px_rgba(253,224,71,0.8)] -translate-y-1";
-                        }
-                    }
-                }
-            };
-
-            // 朗讀結束後恢復全白，並判斷是否需要重播或解鎖
-            utterance.onend = () => {
-                words.forEach((_, i) => {
-                    const el = document.getElementById(`res-word-${i}`);
-                    if(el) el.className = "inline-block transition-all duration-150 text-white";
-                });
-
-                if (isAutoPlay) {
-                    playCount++;
-                    if (playCount < maxPlays) {
-                        overlayBtn.innerHTML = `請聆聽發音... (${playCount + 1}/${maxPlays})`;
-                        // 等待 1 秒後播放第二次
-                        setTimeout(() => window.playFinalSentenceWithHighlight(true), 1000);
-                    } else {
-                        unlockNextButton();
-                    }
-                }
-            };
-            
-            // 萬一語音 API 發生錯誤，確保按鈕能解鎖以免遊戲卡死
-            utterance.onerror = () => {
-                unlockNextButton();
-            };
-
-            window.speechSynthesis.speak(utterance);
-        };
-
-        function unlockNextButton() {
-            overlayBtn.disabled = false;
-            // 恢復成原本的藍色可點擊按鈕樣式
-            overlayBtn.className = "bg-blue-500 hover:bg-blue-600 text-white font-bold py-4 px-10 rounded-full shadow-lg text-xl transition-transform active:scale-95";
-            
-            if (currentLevel >= sentences.length) {
-                overlayBtn.innerHTML = "查看最後總分";
-                overlayBtn.onclick = showScoreboard;
-            } else {
-                overlayBtn.innerHTML = "下一關 Next Level";
-                overlayBtn.onclick = startReadyCountdown;
-            }
-            
-            // 顯示讓學生可以手動重播的按鈕
-            const replayBtn = document.getElementById('replaySentenceBtn');
-            if (replayBtn) replayBtn.classList.remove('hidden');
+        // 按鈕先變成灰色，並禁止按下
+        overlayBtn.disabled = true;
+        overlayBtn.className = "bg-slate-500 text-slate-300 font-bold py-4 px-10 rounded-full shadow-lg text-xl cursor-not-allowed transition-colors duration-300";
+        
+        if (currentLevel >= sentences.length) {
+            overlayBtn.innerHTML = "查看最後總分";
+            overlayBtn.onclick = showScoreboard;
+        } else {
+            overlayBtn.innerHTML = "下一關 Next Level";
+            overlayBtn.onclick = startReadyCountdown;
         }
 
         overlay.classList.remove('hidden');
-        // 延遲半秒後自動觸發第一次播放 (傳入 true 代表是自動播放模式)
-        setTimeout(() => window.playFinalSentenceWithHighlight(true), 500);
+
+        // 💥 修改：過關畫面出現後，連續讀出兩次句子，完成後才解鎖按鈕
+        setTimeout(() => {
+            speakSentence(fullText, () => {
+                // 第一次唸完後，等待 0.8 秒
+                setTimeout(() => {
+                    speakSentence(fullText, () => {
+                        // 第二次唸完後，恢復按鈕顏色並允許點擊
+                        overlayBtn.disabled = false;
+                        overlayBtn.className = "bg-blue-500 hover:bg-blue-600 text-white font-bold py-4 px-10 rounded-full shadow-lg text-xl transition-transform active:scale-95";
+                    });
+                }, 800); 
+            });
+        }, 400); // 稍微延遲 0.4 秒讓最後一個單字的聲音順利唸完
     }
 
     function showScoreboard() {
@@ -682,7 +669,7 @@
             const wordObj = wordsOnBoard[i];
             if (head.y === wordObj.y && head.x >= wordObj.x && head.x < wordObj.x + wordObj.span) {
                 if (wordObj.word === sentences[currentLevel][targetWordIndex]) {
-                    speakSentence(wordObj.word); // 讀出吃下的正確單字發音
+                    speakWord(wordObj.word); // 💥 貪吃蛇吃下正確單字時發音
                     score += 10; 
                     scoreDisplay.textContent = score; 
                     targetWordIndex++; 
@@ -822,7 +809,6 @@
     };
     setupBtn('btnUp', 0, -1); setupBtn('btnDown', 0, 1); setupBtn('btnLeft', -1, 0); setupBtn('btnRight', 1, 0);
 
-    window.speakSentence = speakSentence;
     showIntroPage1();
     draw();
 </script>
