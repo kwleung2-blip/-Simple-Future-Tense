@@ -233,13 +233,14 @@
     overlayBtn.addEventListener('click', playClickSound);
     // ----------------------------------------------------
 
-    // --- 全新加入：單字發音 (Speech Synthesis) ---
+    // --- 全新加入：單字與句子發音引擎 (Speech Synthesis) ---
     let preferredVoice = null;
+    let isSpeaking = false; // 追蹤是否正在播放語音，避免學生狂點
+    
     function loadVoice() {
         if (!window.speechSynthesis) return;
         const voices = window.speechSynthesis.getVoices();
         if (voices.length === 0) return;
-
         const maleVoiceKeywords = ['David', 'Daniel', 'Alex', 'Fred', 'Arthur', 'Male', 'James'];
         for (let voice of voices) {
             if (voice.lang.includes('en') && maleVoiceKeywords.some(keyword => voice.name.includes(keyword))) {
@@ -259,60 +260,43 @@
         loadVoice();
     }
 
-    function speakWord(text) {
-        if (!window.speechSynthesis) return;
-        
-        // 過濾掉標點符號，讓單字獨立發音時更自然
-        const cleanText = text.replace(/[\.\?\!]/g, '');
-        if (!cleanText.trim()) return;
-
-        window.speechSynthesis.resume(); // 強制喚醒 iOS 語音引擎
-        window.speechSynthesis.cancel(); // 中斷前一個正在唸的字
-        
-        const utterance = new SpeechSynthesisUtterance(cleanText);
-        utterance.lang = 'en-US';
-        if (preferredVoice) utterance.voice = preferredVoice;
-        utterance.rate = 0.8; // 速度微調，聽起來清晰
-        window.speechSynthesis.speak(utterance);
-    }
-
-    // --- 修改：整句發音 (支援回呼函數，並加入防當機保險機制) ---
-    function speakSentence(text, onEndCallback) {
+    // 朗讀句子的專屬函數，包含回調函數(Callback)通知播放結束
+    function speakSentenceText(text, onEndCallback) {
         if (!window.speechSynthesis) {
-            if (onEndCallback) setTimeout(onEndCallback, 2000);
+            if (onEndCallback) setTimeout(onEndCallback, 1500);
             return;
         }
-        
-        window.speechSynthesis.resume(); 
-        window.speechSynthesis.cancel(); 
+        window.speechSynthesis.resume();
+        window.speechSynthesis.cancel();
         
         const utterance = new SpeechSynthesisUtterance(text);
         utterance.lang = 'en-US';
         if (preferredVoice) utterance.voice = preferredVoice;
-        utterance.rate = 0.75; // 唸整句時稍微放慢一點點，讓學生聽得更清楚
+        utterance.rate = 0.75; // 放慢一點讓學生聽清楚
         
         if (onEndCallback) {
             let called = false;
             const safeCallback = () => {
                 if (!called) {
                     called = true;
+                    isSpeaking = false;
                     onEndCallback();
                 }
             };
             utterance.onend = safeCallback;
             utterance.onerror = safeCallback;
             
-            // 蘋果 iOS 系統的語音 API 有時不會觸發 onend 事件
-            // 這裡加入一個保險機制，根據字串長度估算最長播放時間，時間到強制觸發下一步，避免卡關
+            // 保險機制：防止系統語音 bug 不觸發結束事件，自動計算最長可能時間後解鎖
             const fallbackTime = Math.max(2000, text.length * 150) + 1000;
             setTimeout(safeCallback, fallbackTime);
         }
-
+        
+        isSpeaking = true;
         window.speechSynthesis.speak(utterance);
     }
     // ----------------------------------------------------
 
-    // 【全域音樂與語音解鎖器】確保蘋果設備能正常發出聲音
+    // 【全域音樂與語音解鎖器】確保蘋果設備能正常發出按鈕聲音、背景音樂與語音
     let isAudioUnlocked = false;
     function unlockAllAudio() {
         if (isAudioUnlocked) return;
@@ -585,17 +569,27 @@
         overlayTitle.textContent = "太棒了！挑戰成功";
         overlayTitle.className = "text-3xl font-bold text-green-400 mb-2";
         
-        // 顯示純文字完整句子，移除語音相關按鈕與標籤
+        // 加入喇叭按鈕與句子排版
+        const speakerHtml = `
+            <button id="speakerBtn" class="animate-pulse bg-blue-500 hover:bg-blue-400 text-white rounded-full w-12 h-12 sm:w-14 sm:h-14 flex items-center justify-center text-2xl sm:text-3xl shadow-lg transition-transform active:scale-90 flex-shrink-0 cursor-pointer border-2 border-white/20">
+                🔊
+            </button>
+        `;
+
         overlayMessage.innerHTML = `
-            <div class="text-4xl sm:text-5xl font-black text-white mb-6 mt-4 tracking-wide text-center leading-normal drop-shadow-md">
-                ${fullText}
+            <div class="flex items-center justify-center gap-3 sm:gap-4 mb-2 mt-4 w-full px-2">
+                ${speakerHtml}
+                <div class="text-3xl sm:text-4xl font-black text-white tracking-wide text-left leading-normal drop-shadow-md">
+                    ${fullText}
+                </div>
             </div>
+            <p id="listenHint" class="text-yellow-300 font-bold mb-4 text-sm sm:text-base">👆 請點擊喇叭聽句子 (0/2)</p>
             ${svoptHtml}
         `;
         
         currentLevel++;
         
-        // 按鈕先變成灰色，並禁止按下
+        // 💥 修改：下一關按鈕先反灰，鎖定不能點擊
         overlayBtn.disabled = true;
         overlayBtn.className = "bg-slate-500 text-slate-300 font-bold py-4 px-10 rounded-full shadow-lg text-xl cursor-not-allowed transition-colors duration-300";
         
@@ -609,19 +603,45 @@
 
         overlay.classList.remove('hidden');
 
-        // 💥 修改：過關畫面出現後，連續讀出兩次句子，完成後才解鎖按鈕
+        // 綁定喇叭點擊互動邏輯
         setTimeout(() => {
-            speakSentence(fullText, () => {
-                // 第一次唸完後，等待 0.8 秒
-                setTimeout(() => {
-                    speakSentence(fullText, () => {
-                        // 第二次唸完後，恢復按鈕顏色並允許點擊
-                        overlayBtn.disabled = false;
-                        overlayBtn.className = "bg-blue-500 hover:bg-blue-600 text-white font-bold py-4 px-10 rounded-full shadow-lg text-xl transition-transform active:scale-95";
+            const speakerBtn = document.getElementById('speakerBtn');
+            const listenHint = document.getElementById('listenHint');
+            let playCount = 0;
+
+            if (speakerBtn) {
+                speakerBtn.onclick = () => {
+                    if (isSpeaking) return; // 防止語音播放中重複狂點
+                    
+                    // 播放中的視覺回饋
+                    speakerBtn.classList.remove('animate-pulse');
+                    speakerBtn.classList.add('opacity-50', 'scale-95');
+                    listenHint.textContent = `🔊 播放中...`;
+                    
+                    // 呼叫發音函數
+                    speakSentenceText(fullText, () => {
+                        playCount++;
+                        speakerBtn.classList.remove('opacity-50', 'scale-95');
+                        
+                        if (playCount < 2) {
+                            // 聽完第一次，提醒再聽一次
+                            speakerBtn.classList.add('animate-pulse');
+                            listenHint.textContent = `👆 請再聽一次加深印象 (${playCount}/2)`;
+                        } else {
+                            // 兩次都聽完了，解鎖下一關
+                            speakerBtn.classList.remove('animate-pulse');
+                            speakerBtn.classList.replace('bg-blue-500', 'bg-green-500');
+                            speakerBtn.classList.replace('hover:bg-blue-400', 'hover:bg-green-400');
+                            listenHint.textContent = `✅ 聽力完成 (2/2)！請前往下一關`;
+                            
+                            // 💥 解鎖主按鈕
+                            overlayBtn.disabled = false;
+                            overlayBtn.className = "bg-blue-500 hover:bg-blue-600 text-white font-bold py-4 px-10 rounded-full shadow-lg text-xl transition-transform active:scale-95";
+                        }
                     });
-                }, 800); 
-            });
-        }, 400); // 稍微延遲 0.4 秒讓最後一個單字的聲音順利唸完
+                };
+            }
+        }, 100);
     }
 
     function showScoreboard() {
@@ -669,7 +689,7 @@
             const wordObj = wordsOnBoard[i];
             if (head.y === wordObj.y && head.x >= wordObj.x && head.x < wordObj.x + wordObj.span) {
                 if (wordObj.word === sentences[currentLevel][targetWordIndex]) {
-                    speakWord(wordObj.word); // 💥 貪吃蛇吃下正確單字時發音
+                    playClickSound(); // 💥 吃到正確詞語時，發出清脆的「波！」聲
                     score += 10; 
                     scoreDisplay.textContent = score; 
                     targetWordIndex++; 
