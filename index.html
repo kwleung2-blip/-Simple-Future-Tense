@@ -51,10 +51,7 @@
     <header class="w-full max-w-lg px-4 pt-4 pb-2 flex justify-between items-center text-slate-700">
         <h1 class="text-xl font-bold text-blue-600">SVOPT Grammar Snake</h1>
         <div class="flex gap-2">
-            <!-- 音樂開關按鈕 -->
-            <button id="bgmToggle" class="text-base font-bold bg-white px-3 py-1 rounded-full shadow-sm text-slate-600 hover:bg-slate-50 transition-colors">
-                🔊
-            </button>
+            <!-- 已經移除音樂開關按鈕，強制預設開啟 -->
             <div class="text-base font-bold bg-white px-3 py-1 rounded-full shadow-sm text-slate-600">
                 ⏱️ <span id="timeDisplay" class="text-blue-500">00:00</span>
             </div>
@@ -183,8 +180,7 @@
     let isDizzy = false, dizzyTimeout, timeElapsed = 0, timerInterval;
 
     const bgm = document.getElementById('bgm');
-    const bgmToggle = document.getElementById('bgmToggle');
-    let isMusicPlaying = false;
+    // 移除了 bgmToggle
     bgm.volume = 0.5; // 提高音量至 50% 確保清楚聽見
 
     const scoreDisplay = document.getElementById('scoreDisplay');
@@ -242,52 +238,39 @@
         window.speechSynthesis.speak(utterance);
     }
 
-    // 音樂控制開關
-    bgmToggle.addEventListener('click', (e) => {
-        e.stopPropagation(); // 避免觸發全域點擊
-        if (bgm.paused) {
-            bgm.play().then(() => {
-                bgmToggle.textContent = "🔊";
-                isMusicPlaying = true;
-            }).catch(e => console.log("播放音樂失敗:", e));
-        } else {
-            bgm.pause();
-            bgmToggle.textContent = "🔇";
-            isMusicPlaying = false;
-        }
-    });
-
-    // 【全新加入】全域音訊與語音解鎖器 (針對 iOS/iPadOS)
+    // 【全新加入】全域音訊與語音解鎖器 (針對 iOS/iPadOS 最強勢解鎖)
     let isAudioUnlocked = false;
     function unlockAllAudio() {
         if (isAudioUnlocked) return;
 
-        // 1. 解鎖背景音樂
+        // 1. 強制解鎖背景音樂
         if (bgm.paused) {
             bgm.volume = 0.5;
             let playPromise = bgm.play();
             if (playPromise !== undefined) {
-                playPromise.then(() => {
-                    isMusicPlaying = true;
-                    bgmToggle.textContent = "🔊";
-                }).catch(e => console.log("音樂解鎖等待中...", e));
+                playPromise.catch(e => console.log("音樂解鎖等待中...", e));
             }
         }
 
         // 2. 更強力的解鎖蘋果語音引擎
         if (window.speechSynthesis) {
             window.speechSynthesis.resume(); // 💥 喚醒引擎
-            const silentUtterance = new SpeechSynthesisUtterance('hello'); // 💥 不要用空字串，iOS可能會直接忽略
+            
+            // 使用空白字元而不是 hello，避免發出怪聲，但能成功騙過 iOS
+            const silentUtterance = new SpeechSynthesisUtterance(' '); 
             if (preferredMaleVoice) silentUtterance.voice = preferredMaleVoice; 
-            silentUtterance.volume = 0.01; // 💥 用極小音量代替 0，避免被系統當成垃圾優化掉
-            silentUtterance.rate = 10; // 💥 用最快速度閃過
+            silentUtterance.volume = 0.01; 
+            silentUtterance.rate = 10; 
             window.speechSynthesis.speak(silentUtterance);
         }
 
         isAudioUnlocked = true;
+        // 解鎖成功後，移除全域監聽器，節省資源
+        document.body.removeEventListener('click', unlockAllAudio);
+        document.body.removeEventListener('touchstart', unlockAllAudio);
     }
 
-    // 監聽所有點擊與觸控來觸發解鎖
+    // 監聽所有點擊與觸控來觸發解鎖 (第一次點擊畫面任何地方就觸發)
     document.body.addEventListener('click', unlockAllAudio);
     document.body.addEventListener('touchstart', unlockAllAudio, {passive: true});
 
